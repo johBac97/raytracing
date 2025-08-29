@@ -1,18 +1,18 @@
-use crossterm::{
-    cursor::{MoveTo, Show},
-    event::{self, Event, KeyCode},
-    style::Print,
-    terminal::{disable_raw_mode, enable_raw_mode, Clear, ClearType},
-    ExecutableCommand, QueueableCommand,
-};
-use std::io::{self, stdout, Write};
-use std::{env, fs, time};
+use minifb::{Key, Window, WindowOptions};
+use std::io;
+use std::{env, fs};
 
 // Constants
 static FOV: f64 = std::f64::consts::PI / 3.0;
-static H: usize = 54;
-static W: usize = 180;
+
+static H: usize = 120;
+static W: usize = 240;
 static K: f64 = H as f64;
+
+static SCALE: usize = 10;
+static WINDOW_HEIGHT: usize = H * SCALE;
+static WINDOW_WIDTH: usize = (W + 10) * SCALE;
+
 
 fn load_map(path: &std::path::Path) -> Vec<Vec<char>> {
     let contents = fs::read_to_string(path).expect("Load");
@@ -109,10 +109,12 @@ fn render_screen(
     map: &[Vec<char>],
     player_x: f64,
     player_y: f64,
+    buffer: &mut Vec<u32>,
     screen_height: usize,
     screen_width: usize,
-) -> Vec<Vec<char>> {
-    let mut screen = vec![vec![' '; screen_width]; screen_height];
+) {
+    // Clear buffer
+    buffer.fill(0x000000);
 
     let distances = calculate_distances(player_x, player_y, player_angle, map);
 
@@ -122,6 +124,31 @@ fn render_screen(
         wall_heights[col_idx] = (K / distances[col_idx]).max(0.0).min(H as f64) as usize;
     }
 
+    for col in 0..W {
+        let wall_height = wall_heights[col];
+        let distance = distances[col];
+
+        let color = if distance < 2.0 {
+            // Wall is close
+            0xFFFFFF
+        } else if distance < 4.0 {
+            0xAAAAAA
+        } else {
+            0x555555
+        };
+
+        for row in (H / 2).saturating_sub(wall_height / 2)..(H / 2 + wall_height / 2).min(H) {
+            for x in (col * SCALE)..((col + 1) * SCALE) {
+                for y in (row * SCALE)..((row + 1) * SCALE) {
+                    if y < screen_height && x < screen_width {
+                        buffer[y * screen_width + x] = color;
+                    }
+                }
+            }
+        }
+    }
+
+    /*
     for (screen_row_idx, screen_row) in screen.iter_mut().enumerate().take(H) {
         for screen_col_idx in 0..W {
             if ((H / 2) - (wall_heights[screen_col_idx] / 2)) < screen_row_idx
@@ -129,6 +156,7 @@ fn render_screen(
             {
                 // Paint a wall here
                 let d = distances[screen_col_idx];
+                /*
                 if d < 2.0 {
                     screen_row[screen_col_idx] = '█';
                 } else if d < 4.0 {
@@ -136,15 +164,19 @@ fn render_screen(
                 } else {
                     screen_row[screen_col_idx] = '▒';
                 }
+                */
+                //buffer[
             }
         }
     }
+    */
 
-    print_map(map, player_x, player_y, player_angle, H, &mut screen);
+    //print_map(map, player_x, player_y, player_angle, H, &mut screen);
 
-    screen
+    //screen
 }
 
+/*
 fn display_screen(screen: &[Vec<char>], prev_screen: &[Vec<char>]) -> std::io::Result<()> {
     let mut stdout = stdout();
 
@@ -159,6 +191,7 @@ fn display_screen(screen: &[Vec<char>], prev_screen: &[Vec<char>]) -> std::io::R
     stdout.flush()?;
     Ok(())
 }
+*/
 
 fn update_map(map: &mut [Vec<char>], player_x: f64, player_y: f64) {
     let map_y = (player_y.floor() as usize).min(map.len() - 1);
@@ -191,76 +224,62 @@ fn main() -> io::Result<()> {
     let map_path = &std::path::Path::new(&args[1]);
     let mut map = load_map(map_path);
 
-    enable_raw_mode()?;
-
     let (mut player_x, mut player_y) = load_player(&map)?;
     let mut player_angle = std::f64::consts::PI / 2.0;
 
-    let screen_height = H + (map.len() + 2) + 8;
-    let screen_width = W;
+    let mut window = Window::new(
+        "Raycasting",
+        WINDOW_WIDTH,
+        WINDOW_HEIGHT,
+        WindowOptions::default()
+    ).expect("Couldn't create new window.");
 
-    let mut prev_screen = vec![vec![' '; screen_width]; screen_height];
-    loop {
+    //window.limit_update_rate(Some(time::Duration::from_millis(16)));
+    window.set_target_fps(60);
+
+    let mut buffer: Vec<u32> = vec![0; WINDOW_HEIGHT * WINDOW_WIDTH];
+
+    while window.is_open() && !window.is_key_down(Key::Q) {
+
+        if window.is_key_down(Key::A) {
+            player_angle -= 0.1;
+        }
+        if window.is_key_down(Key::D) {
+            player_angle += 0.1;
+        }
+
+        if window.is_key_down(Key::W) {
+            let new_x = player_x + 0.1 * player_angle.cos();
+            let new_y = player_y + 0.1 * player_angle.sin();
+            if map[new_y.floor() as usize][new_x.floor() as usize] != '#' {
+                player_x = new_x;
+                player_y = new_y;
+            }
+        }
+
+        if window.is_key_down(Key::S) {
+            let new_x = player_x - 0.1 * player_angle.cos();
+            let new_y = player_y - 0.1 * player_angle.sin();
+            if map[new_y.floor() as usize][new_x.floor() as usize] != '#' {
+                player_x = new_x;
+                player_y = new_y;
+            }
+        }
+
         update_map(&mut map, player_x, player_y);
 
-        let current_screen: Vec<Vec<char>> = render_screen(
+        render_screen(
             player_angle,
             &map,
             player_x,
             player_y,
-            screen_height,
-            screen_width,
+            &mut buffer,
+            WINDOW_HEIGHT,
+            WINDOW_WIDTH,
         );
 
-        let _ = display_screen(&current_screen, &prev_screen);
-
-        prev_screen = current_screen;
-
-        if event::poll(time::Duration::from_millis(16))? {
-            if let Event::Key(key_event) = event::read()? {
-                match key_event.code {
-                    KeyCode::Char('q') => break,
-                    KeyCode::Char('a') => player_angle -= 0.1,
-                    KeyCode::Char('d') => player_angle += 0.1,
-                    KeyCode::Char('w') => {
-                        let new_x = player_x + 0.1 * player_angle.cos();
-                        let new_y = player_y + 0.1 * player_angle.sin();
-                        if map[new_y.floor() as usize][new_x.floor() as usize] != '#' {
-                            player_x = new_x;
-                            player_y = new_y;
-                        }
-                    }
-                    KeyCode::Char('s') => {
-                        let new_x = player_x - 0.1 * player_angle.cos();
-                        let new_y = player_y - 0.1 * player_angle.sin();
-                        if map[new_y.floor() as usize][new_x.floor() as usize] != '#' {
-                            player_x = new_x;
-                            player_y = new_y;
-                        }
-                    }
-                    KeyCode::Char('p') => {
-                        // Debug print a bunch of stuff.
-                        let distances = calculate_distances(player_x, player_y, player_angle, &map);
-                        let formatted: Vec<String> =
-                            distances.iter().map(|&num| format!("{:.2}", num)).collect();
-                        let output = format!("[{}]", formatted.join(", "));
-                        stdout().execute(MoveTo(0, (H + map.len() + 7) as u16))?;
-                        write!(stdout(), "{}", output)?;
-                        stdout().flush()?;
-                        std::thread::sleep(time::Duration::from_millis(2000));
-                    }
-                    _ => {}
-                }
-            }
-        }
-
-        std::thread::sleep(time::Duration::from_millis(16));
+        window.update_with_buffer(&buffer, WINDOW_WIDTH, WINDOW_HEIGHT).expect("Couldn't update buffer");
     }
-
-    stdout().execute(Clear(ClearType::All))?;
-    stdout().execute(MoveTo(0, 0))?;
-    disable_raw_mode()?;
-    stdout().execute(Show)?;
 
     Ok(())
 }

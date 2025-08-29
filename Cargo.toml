@@ -1,7 +1,7 @@
 [package]
 name = "raytracing"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 
 [dependencies]
-crossterm = "0.29.0"
+minifb = "0.28.0"
